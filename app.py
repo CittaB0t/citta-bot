@@ -155,8 +155,17 @@ if prompt := st.chat_input("Type your message here..."):
         "parts": [{"text": prompt}]
     })
 
-    with st.chat_message("assistant"):
-        with         with st.spinner("Thinking..."):
+      with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            # Stripped out the mask to force Google's true error to display on your screen
+            response = model.generate_content(
+                st.session_state.raw_history,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.7,
+                    max_output_tokens=500,
+                )
+            )
+            full_response = response.text
             try:
                 response = model.generate_content(
                     st.session_state.raw_history,

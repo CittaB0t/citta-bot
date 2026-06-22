@@ -106,17 +106,21 @@ if "demographics_injected" not in st.session_state:
         "sector": sector,
     }
     st.session_state.demographics_injected = True
-
+  
 # ---------- INITIALISE GEMINI ----------
-# Hardcoded direct key insertion to bypass Streamlit settings entirely
-api_key = "AQ.Ab8RN6JtQS2pFivqYRUOWHATeZeYX2o3icx2JgHC3FVUhrOA1A"
+# Replace this string with a fresh key generated strictly via aistudio.google.com
+api_key = "AIzaSyYOUR_NEW_VALID_KEY_HERE"
 
-genai.configure(api_key=api_key, transport="rest")
-
-model = genai.GenerativeModel(
-    model_name="models/gemini-1.5-flash",
-    system_instruction=SYSTEM_PROMPT,
-)
+try:
+    genai.configure(api_key=api_key.strip(), transport="rest")
+    model = genai.GenerativeModel(
+        model_name="models/gemini-1.5-flash",
+        system_instruction=SYSTEM_PROMPT,
+    )
+except Exception as connection_issue:
+    st.error("❌ Authentication failure: Google rejected the key string format.")
+    st.caption(f"Server Log Context: {connection_issue}")
+    st.stop()
 
 # ---------- SESSION STATE FOR CHAT ----------
 if "messages" not in st.session_state:

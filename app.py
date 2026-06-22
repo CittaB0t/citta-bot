@@ -123,15 +123,13 @@ model = genai.GenerativeModel(
     model_name="models/gemini-1.5-flash",
     system_instruction=SYSTEM_PROMPT,
 )
-
 # ---------- SESSION STATE FOR CHAT ----------
-# Keep this global context variable completely clear of the conditional block
-initial_context = (
-    f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
-    f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
-)
-
 if "messages" not in st.session_state:
+    # Save the system context text securely into session memory permanently
+    st.session_state.initial_context = (
+        f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
+        f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
+    )
     st.session_state.hidden_context_sent = False
     st.session_state.messages = []
     st.session_state.raw_history = []
@@ -147,15 +145,15 @@ if prompt := st.chat_input("Type your message here..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Append the initial background context tracking correctly formatted
+    # Use the safe, session-stored configuration text 
     if not st.session_state.hidden_context_sent:
         st.session_state.raw_history.append({
             "role": "user",
-            "parts": [{"text": initial_context}]
+            "parts": [{"text": st.session_state.initial_context}]
         })
         st.session_state.hidden_context_sent = True
 
-    # Force the prompt into a dictionary object that the gRPC client expects
+    # Pass user message structure properly formatted for standard REST
     st.session_state.raw_history.append({
         "role": "user",
         "parts": [{"text": prompt}]
@@ -173,11 +171,11 @@ if prompt := st.chat_input("Type your message here..."):
                 )
                 full_response = response.text
             except Exception as api_err:
-                st.error("⚠️ Connection error. Please check your API key or network status.")
+                st.error("⚠️ Connection error. Please verify your GEMINI_API_KEY inside Streamlit Advanced Settings.")
                 print(f"[API FAILURE]: {api_err}")
                 st.stop()
 
-        # Extract hidden JSON block safely
+        # Extract the hidden trailing developer JSON tags cleanly
         json_match = re.search(r'\{.*?"phase".*?\}', full_response, re.DOTALL)
         risk_data = None
         if json_match:
@@ -189,11 +187,14 @@ if prompt := st.chat_input("Type your message here..."):
         else:
             display_text = full_response
 
+        # Render only clean, therapeutic text to the employee screen
         st.markdown(display_text.strip())
 
+        # Safely capture background developer routing logs
         if risk_data:
             print(f"[CITTA RISK DATA] {risk_data}")
 
+    # Append structural history states for seamless multi-turn recollection
     st.session_state.messages.append({"role": "assistant", "content": display_text.strip()})
     st.session_state.raw_history.append({
         "role": "model",

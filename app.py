@@ -108,10 +108,17 @@ if "demographics_injected" not in st.session_state:
     st.session_state.demographics_injected = True
 
 # ---------- INITIALISE GEMINI ----------
-# We pull the key from Streamlit Cloud dashboard securely to stop code-level typos
-try:
-    api_key = st.secrets["AQ.Ab8RN6LI4evprMNJHfooF3JyesC1zgadQaQ5299I-EPARF11GA"]
-except Exception:
+# Fallback lookup system to force Streamlit to find your text box key
+api_key = st.secrets.get("GEMINI_API_KEY")
+
+if not api_key:
+    # If the direct look-up fails, scan the entire box text for your AIzaSy key string
+    for value in st.secrets.values():
+        if isinstance(value, str) and value.startswith("AIzaSy"):
+            api_key = value
+            break
+
+if not api_key:
     st.error("⚠️ Key missing. Please paste your GEMINI_API_KEY inside Streamlit Advanced Settings -> Secrets.")
     st.stop()
 
@@ -182,8 +189,3 @@ if prompt := st.chat_input("Type your message here..."):
         if risk_data:
             print(f"[CITTA RISK DATA] {risk_data}")
 
-    st.session_state.messages.append({"role": "assistant", "content": display_text.strip()})
-    st.session_state.raw_history.append({
-        "role": "model",
-        "parts": [{"text": full_response}]
-    })

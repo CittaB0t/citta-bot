@@ -108,23 +108,28 @@ if "demographics_injected" not in st.session_state:
     st.session_state.demographics_injected = True
 
 # ---------- INITIALISE GEMINI ----------
-# Paste your fresh key starting with AIzaSy inside the quotes below
-api_key = "AIzaSyYOUR_ACTUAL_KEY_HERE"
+# Paste your verified key string beginning with AIzaSy here
+api_key = "AQ.Ab8RN6KH-14uH2TwTiWJiOf8UKyWSGPxRYz-OvLS0T1ZTbUVVw"
 
 genai.configure(api_key=api_key.strip(), transport="rest")
 
+# Combine prompt rules and session data together into system instructions natively
+dynamic_system_prompt = (
+    f"{SYSTEM_PROMPT}\n\n"
+    f"## CURRENT ACTIVE SESSION CONTEXT:\n"
+    f"- Target Employee Name: {employee_name}\n"
+    f"- Sector/Industry: {sector}\n"
+    f"- Preferred Language: {preferred_lang}\n"
+    f"Always greet the employee by name and fulfill the conversation rules listed above."
+)
+
 model = genai.GenerativeModel(
     model_name="models/gemini-1.5-flash",
-    system_instruction=SYSTEM_PROMPT,
+    system_instruction=dynamic_system_prompt,
 )
 
 # ---------- SESSION STATE FOR CHAT ----------
 if "messages" not in st.session_state:
-    st.session_state.initial_context = (
-        f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
-        f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
-    )
-    st.session_state.hidden_context_sent = False
     st.session_state.messages = []
     st.session_state.raw_history = []
 
@@ -139,19 +144,11 @@ if prompt := st.chat_input("Type your message here..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Alternate role turns perfectly to prevent Google BadRequest errors
-    if not st.session_state.hidden_context_sent:
-        combined_first_turn = f"{st.session_state.initial_context}\n\nUser Message: {prompt}"
-        st.session_state.raw_history.append({
-            "role": "user",
-            "parts": [{"text": combined_first_turn}]
-        })
-        st.session_state.hidden_context_sent = True
-    else:
-        st.session_state.raw_history.append({
-            "role": "user",
-            "parts": [{"text": prompt}]
-        })
+    # Clean history tracking that perfectly mirrors Google's chat API rules
+    st.session_state.raw_history.append({
+        "role": "user",
+        "parts": [{"text": prompt}]
+    })
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):

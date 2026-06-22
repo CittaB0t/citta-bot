@@ -148,6 +148,18 @@ if prompt := st.chat_input("Type your message here..."):
             "parts": [initial_context]
         })
         st.session_state.hidden_context_sent = True
+# ---------- SESSION STATE FOR CHAT ----------
+# 1. Define this globally so it's always accessible on every rerun
+initial_context = (
+    f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
+    f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
+)
+
+# 2. Only initialize the history tracking containers if they don't exist yet
+if "messages" not in st.session_state:
+    st.session_state.hidden_context_sent = False
+    st.session_state.messages = []
+    st.session_state.raw_history = []
 
     st.session_state.raw_history.append({
         "role": "user",

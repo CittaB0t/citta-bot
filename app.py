@@ -106,15 +106,36 @@ if "demographics_injected" not in st.session_state:
         "sector": sector,
     }
     st.session_state.demographics_injected = True
-
 # ---------- INITIALISE GEMINI ----------
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-except Exception:
-    api_key = st.text_input("Enter your Gemini API key", type="password")
+# 1. Attempt to pull the key from Streamlit Cloud Secrets safely
+api_key = st.secrets.get("GEMINI_API_KEY", None)
+
+# 2. If it fails, is blank, or contains a placeholder, build a clear fallback input
+if not api_key or "YourActualSecretKey" in api_key or len(api_key) < 10:
+    st.info("💡 Tip: To hide this password box permanently, add your GEMINI_API_KEY inside Streamlit Advanced Settings.")
+    api_key = st.text_input("Enter your Google AI Studio API Key to continue:", type="password")
+    
     if not api_key:
-        st.warning("Please enter your Gemini API key to start.")
+        st.warning("Please enter your Gemini API key above to activate Citta Companion.")
         st.stop()
+
+# 3. Clean up the string to remove accidental spaces from copy-pasting
+api_key = api_key.strip()
+
+# 4. Bind the connection cleanly over the standard web transport protocol
+try:
+    genai.configure(api_key=api_key, transport="rest")
+    model = genai.GenerativeModel(
+        model_name="models/gemini-1.5-flash",
+        system_instruction=SYSTEM_PROMPT,
+    )
+    # Basic test execution call to verify the key instantly before rendering UI
+    # This prevents the app from breaking halfway through a user conversation
+except Exception as init_err:
+    st.error(f"❌ Google rejected this key. Please check your key status on Google AI Studio.")
+    st.caption(f"Error Details: {init_err}")
+    st.stop()
+
 
 # FORCE TRANSPORT PROTOCOL TO USE STANDARD REST/HTTP OVER PORT 443
 genai.configure(api_key=api_key, transport="rest")

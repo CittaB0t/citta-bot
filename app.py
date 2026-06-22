@@ -92,12 +92,11 @@ This allows the backend to parse and take action (e.g., send email when intake_t
 st.set_page_config(page_title="Citta Companion", page_icon="🌿", layout="centered")
 st.title("🌿 Citta Companion")
 st.caption("Confidential well-being support · Your conversation is private")
-
 # ---------- READ DEMOGRAPHICS FROM URL PARAMETERS ----------
 query_params = st.query_params
-employee_name = query_params.get("name", ["there"])[0]
-preferred_lang = query_params.get("lang", ["en"])[0]
-sector = query_params.get("sector", ["unknown"])[0]
+employee_name = query_params.get("name", "there")
+preferred_lang = query_params.get("lang", "en")
+sector = query_params.get("sector", "unknown")
 
 if "demographics_injected" not in st.session_state:
     st.session_state.demographics = {
@@ -106,7 +105,6 @@ if "demographics_injected" not in st.session_state:
         "sector": sector,
     }
     st.session_state.demographics_injected = True
-
 # ---------- INITIALISE GEMINI ----------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]

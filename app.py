@@ -184,3 +184,5 @@ if prompt := st.chat_input("Type your message here..."):
     st.session_state.messages.append({"role": "assistant", "content": display_text.strip()})
     st.session_state.raw_history.append({
         "role": "model",
+        "parts": [{"text": full_response}]
+    })

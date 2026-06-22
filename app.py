@@ -109,7 +109,7 @@ if "demographics_injected" not in st.session_state:
   
 # ---------- INITIALISE GEMINI ----------
 # Replace this string with a fresh key generated strictly via aistudio.google.com
-api_key = "AIzaSyYOUR_NEW_VALID_KEY_HERE"
+api_key = "AQ.Ab8RN6KH-14uH2TwTiWJiOf8UKyWSGPxRYz-OvLS0T1ZTbUVVw"
 
 try:
     genai.configure(api_key=api_key.strip(), transport="rest")

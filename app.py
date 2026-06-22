@@ -1,6 +1,4 @@
 import os
-import re
-import json
 import traceback
 from typing import Any, Dict, List
 
@@ -19,7 +17,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🌿 Citta Discovery Assistant")
+st.title("Citta Discovery Assistant")
 st.caption(
     "AI-supported discovery for preventive workplace mental health. "
     "This tool is not a diagnosis, therapy, crisis service, or emergency support."
@@ -59,92 +57,46 @@ if not GOOGLE_API_KEY:
     )
     st.stop()
 
-genai.configure(api_key=GOOGLE_API_KEY, transport="rest")
+genai.configure(api_key=GOOGLE_API_KEY)
 
-MODEL_NAME = get_secret("GEMINI_MODEL", "models/gemini-1.5-flash")
-
-
-# ------------------------------------------------------------
-# Read Demographics from URL Parameters (Your Custom Logic)
-# ------------------------------------------------------------
-query_params = st.query_params
-employee_name = query_params.get("name", "there")
-preferred_lang = query_params.get("lang", "en")
-sector = query_params.get("sector", "unknown")
+MODEL_NAME = get_secret("GEMINI_MODEL", "gemini-1.5-flash")
 
 
-# ---------- BASE SYSTEM PROMPT RULES ----------
-BASE_SYSTEM_PROMPT = """
-You are "Citta Companion", a warm, compassionate, non-judgmental mental well-being assistant for employees. 
-You work strictly within a defined clinical pathway. You NEVER diagnose, prescribe, or act as an emergency service.
+SYSTEM_INSTRUCTION = """
+You are Citta's AI Discovery Assistant.
 
-## CONVERSATION FLOW — MANDATORY SEQUENCE
-You must follow this 4-phase structure. Do not skip phases. The system will track your phase.
+Purpose:
+- Support early workplace mental health discovery.
+- Help employees reflect on stress, burnout, trauma-related language, workplace pressure, emotional load, and support needs.
+- Use a whole-company, preventive mental health lens.
+- Ask clear, gentle, structured questions.
+- Keep the tone warm, professional, trauma-informed, and non-judgmental.
 
-### PHASE 1: GREETING & OPENING
-- Begin: "Hi [Name], I'm Citta, your well-being companion. Everything you share with me is confidential. I'm here to listen, not to judge. How are you feeling today?"
-- Paraphrase their response empathetically. Acknowledge their emotion.
-- If they indicate severe distress (hopelessness, self-harm, suicide), skip immediately to the Risk Protocol below.
+Important boundaries:
+- Do not diagnose.
+- Do not claim the user has PTSD, complex PTSD, depression, anxiety, trauma, ADHD, or any clinical condition.
+- Do not provide therapy or crisis counselling.
+- Do not replace a clinician, therapist, doctor, psychologist, psychiatrist, or emergency service.
+- Do not make medical, legal, employment, or HR determinations.
+- Do not ask for unnecessary identifying personal information.
 
-### PHASE 2: SCREENING — THREE SUB-SECTIONS
-You will ask questions from three blocks in order. After each response, offer a brief empathetic acknowledgment, then move to the next question. Do not give advice yet.
+Risk handling:
+- If the user suggests immediate danger, self-harm, harm to others, abuse, or serious safety risk, respond supportively and advise them to contact local emergency services, a trusted person, or a crisis helpline immediately.
+- For workplace risk, encourage the user to seek appropriate support through their employer, HR, EAP/FEAP contact, clinician, or emergency support depending on urgency.
 
-**Generic Mental Health (2-3 questions)**
-1. "Over the last two weeks, how often have you felt down, depressed, or hopeless?" (follow-up: "How has that affected your daily life?")
-2. "How often have you felt nervous, anxious, or on edge?"
-3. "Have you had trouble sleeping or eating in the last two weeks?"
-
-**Workplace-Related (2-3 questions)**
-4. "How would you rate your current stress from work on a scale of 1 to 10?"
-5. "Do you feel supported by your manager or team?"
-6. "Is there something specific at work that has been bothering you lately?"
-
-**Sector-Specific (1-2 questions — adapt to the industry)**
-- For IT/Tech: "Do you often feel pressure to be constantly available outside work hours?"
-- For Manufacturing: "How safe do you feel in your physical work environment?"
-- For Finance/Banking: "Do you feel high pressure from targets or compliance demands?"
-- For Healthcare: "Have you experienced emotional exhaustion from patient care recently?"
-- If industry is unknown, ask: "What part of your work environment is most draining right now?"
-
-### PHASE 3: SENTIMENT & RISK ASSESSMENT (internal, not shown to user)
-After Phase 2, silently evaluate the entire conversation. Use the following criteria:
-- **No concern**: Employee reports generally positive or mild stress, no functional impairment.
-- **Mild**: Some stress/anxiety/low mood but coping, still functioning.
-- **Moderate**: Consistent low mood, noticeable impact on work/sleep/eating, feeling unsupported, or mentions of using alcohol/substances to cope.
-- **Severe**: Any of the following: thoughts of self-harm, suicide, severe functional impairment, prolonged trauma, violence, abuse, addiction with loss of control, severe hopelessness.
-
-**Mandatory Action after assessment:**
-- If Moderate: Immediately append the following hidden token to your response: `[RISK_MODERATE: primary_concern]`. Then say gently: "I hear that you're going through a tough time. Our clinical intake team can connect you with a specialist who really understands these challenges. Would it be okay if someone from our team reaches out to you confidentially?" If yes, acknowledge and then add token `[INTAKE_REQUESTED]`.
-- If Severe: Append `[RISK_SEVERE: concern]`. Then immediately say: "Thank you for trusting me with this. I'm concerned about your safety right now. Please allow me to have someone from our team, a trained therapist, reach out to you directly within a few hours. It's important you don't go through this alone. Is that okay?" If consent, add `[INTAKE_REQUESTED]`. Also provide emergency contacts: "While we arrange that, please save these numbers: NIMHANS Helpline 080-46110007, AASRA +91-9820466726, or reach out to your nearest emergency room if you feel unsafe."
-- If Mild or No concern: Continue to Phase 4.
-
-### PHASE 4: ONGOING SUPPORT & SOFT-TOUCH CBT
-For employees not escalated (or after escalation with consent), move into supportive chat mode. Here you:
-- Always retain a warm, non-judgmental tone.
-- Offer a soft CBT-inspired intervention based on their last concern. 
-- Do NOT push therapy repeatedly. Once per session is enough.
-- End every session with: "I'm here for you whenever you need. You can come back to this chat anytime. Take care, [Name]."
-
-## OUTPUT FORMAT FOR DEVELOPER
-After every user message, you will output a simple JSON block on a new line, with no markdown, like:
-{"phase": "phase_number_or_name", "risk_level": "none/mild/moderate/severe", "intake_trigger": false}
+Response style:
+- Keep responses concise.
+- Ask one or two questions at a time.
+- Use simple language.
+- Reflect the user's concern before asking the next question.
+- Where appropriate, explain that the discovery is to understand support needs, not to judge performance.
 """
-
-# Dynamically bundle the form demographics directly into the system configuration
-DYNAMIC_INSTRUCTION = (
-    f"{BASE_SYSTEM_PROMPT.strip()}\n\n"
-    f"## CURRENT ACTIVE DATA LINK VALUES:\n"
-    f"- Target Employee First Name: {employee_name}\n"
-    f"- Targeted Industry Sector: {sector}\n"
-    f"- Target Preferred Language Code: {preferred_lang}\n"
-    f"Use the first name to build custom rapport. Fulfill all conversational phase sequences."
-)
 
 
 def create_model() -> genai.GenerativeModel:
     return genai.GenerativeModel(
         model_name=MODEL_NAME,
-        system_instruction=DYNAMIC_INSTRUCTION
+        system_instruction=SYSTEM_INSTRUCTION
     )
 
 
@@ -156,35 +108,99 @@ model = create_model()
 # ------------------------------------------------------------
 
 def to_gemini_history(raw_history: List[Dict[str, Any]], max_messages: int = 30) -> List[Dict[str, Any]]:
+    """
+    Converts Streamlit/OpenAI-style history:
+        {"role": "assistant", "content": "..."}
+    into Gemini-style history:
+        {"role": "model", "parts": ["..."]}
+
+    Gemini expects role to be "user" or "model".
+    It does not accept "assistant" as a role.
+    """
+
     gemini_history: List[Dict[str, Any]] = []
 
     for msg in raw_history:
         role = msg.get("role")
         content = msg.get("content", "")
 
-        if role == "assistant" or role == "model":
+        if role == "assistant":
+            gemini_role = "model"
+        elif role == "model":
             gemini_role = "model"
         elif role == "user":
             gemini_role = "user"
         else:
+            # Skip system, tool, internal, or invalid messages.
             continue
 
         if content is None:
             continue
 
-        content = str(content).strip()
+        if isinstance(content, list):
+            content = "\n".join(str(item) for item in content if item)
+        else:
+            content = str(content)
 
+        content = content.strip()
+
+        # Gemini can reject empty parts.
         if not content:
             continue
 
         gemini_history.append(
             {
                 "role": gemini_role,
-                "parts": [{"text": content}]
+                "parts": [content]
             }
         )
 
     return gemini_history[-max_messages:]
+
+
+# ------------------------------------------------------------
+# Response extractor
+# ------------------------------------------------------------
+
+def extract_response_text(response: Any) -> str:
+    """
+    Safely extracts text from a Gemini response.
+    """
+
+    try:
+        if response.text:
+            return response.text.strip()
+    except Exception:
+        pass
+
+    try:
+        candidates = getattr(response, "candidates", [])
+        if candidates:
+            parts = candidates[0].content.parts
+            texts = []
+
+            for part in parts:
+                text = getattr(part, "text", "")
+                if text:
+                    texts.append(text)
+
+            final_text = "\n".join(texts).strip()
+            if final_text:
+                return final_text
+    except Exception:
+        pass
+
+    try:
+        prompt_feedback = getattr(response, "prompt_feedback", None)
+        if prompt_feedback:
+            return (
+                "I could not generate a response because the request was blocked "
+                f"or rejected by the model safety system.\n\nDetails: {prompt_feedback}"
+            )
+    except Exception:
+        pass
+
+    return "I could not generate a response. Please try again with a shorter or clearer message."
 
 
 # ------------------------------------------------------------
@@ -199,11 +215,12 @@ if "debug_mode" not in st.session_state:
 
 
 # ------------------------------------------------------------
-# Sidebar setup
+# Sidebar
 # ------------------------------------------------------------
 
 with st.sidebar:
     st.subheader("Settings")
+
     st.write("Model:")
     st.code(MODEL_NAME)
 
@@ -218,8 +235,19 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.caption("Active URL Demographics Received:")
-    st.json({"name": employee_name, "lang": preferred_lang, "sector": sector})
+
+    st.caption(
+        "For Streamlit Cloud, add your API key under: "
+        "Manage app → Settings → Secrets."
+    )
+
+    st.code(
+        """
+GOOGLE_API_KEY = "your_api_key_here"
+GEMINI_MODEL = "gemini-1.5-flash"
+        """.strip(),
+        language="toml"
+    )
 
 
 # ------------------------------------------------------------
@@ -227,11 +255,11 @@ with st.sidebar:
 # ------------------------------------------------------------
 
 if not st.session_state.raw_history:
-    # Greet using the dynamic URL parameter name value smoothly
     opening_message = (
-        f"Hi {employee_name}, I'm Citta, your well-being companion. "
-        f"Everything you share with me is confidential. I'm here to listen, "
-        f"not to judge. How are you feeling today?"
+        "Hello, I’m Citta’s AI Discovery Assistant. "
+        "I can help explore workplace stress, emotional load, burnout signals, "
+        "and support needs in a structured and non-judgmental way.\n\n"
+        "To begin, what would you like support with today?"
     )
 
     st.session_state.raw_history.append(
@@ -243,7 +271,107 @@ if not st.session_state.raw_history:
 
 
 # ------------------------------------------------------------
-# Render chat history to layout
+# Render chat history
 # ------------------------------------------------------------
 
 for msg in st.session_state.raw_history:
+    role = msg.get("role", "assistant")
+    content = msg.get("content", "")
+
+    if role not in ["user", "assistant"]:
+        continue
+
+    with st.chat_message(role):
+        st.markdown(content)
+
+
+# ------------------------------------------------------------
+# Chat input
+# ------------------------------------------------------------
+
+user_prompt = st.chat_input("Type your message here...")
+
+if user_prompt:
+    # Add user message to Streamlit history.
+    st.session_state.raw_history.append(
+        {
+            "role": "user",
+            "content": user_prompt
+        }
+    )
+
+    with st.chat_message("user"):
+        st.markdown(user_prompt)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                gemini_history = to_gemini_history(st.session_state.raw_history)
+
+                if not gemini_history:
+                    st.error("No valid message history was available for Gemini.")
+                    st.stop()
+
+                response = model.generate_content(
+                    gemini_history,
+                    generation_config=genai.GenerationConfig(
+                        temperature=0.4,
+                        top_p=0.9,
+                        top_k=40,
+                        max_output_tokens=900
+                    )
+                )
+
+                assistant_reply = extract_response_text(response)
+
+            except BadRequest as e:
+                assistant_reply = (
+                    "The request sent to Gemini was rejected. "
+                    "This usually means the message history format is invalid, "
+                    "too large, empty, or contains a role Gemini does not accept."
+                )
+
+                st.error(assistant_reply)
+
+                if st.session_state.debug_mode:
+                    st.subheader("BadRequest details")
+                    st.code(str(e))
+
+                    st.subheader("Converted Gemini history")
+                    st.json(to_gemini_history(st.session_state.raw_history))
+
+                st.stop()
+
+            except GoogleAPIError as e:
+                assistant_reply = (
+                    "There was a Google API error while generating the response."
+                )
+
+                st.error(assistant_reply)
+
+                if st.session_state.debug_mode:
+                    st.code(str(e))
+
+                st.stop()
+
+            except Exception as e:
+                assistant_reply = (
+                    "Something went wrong while generating the response."
+                )
+
+                st.error(assistant_reply)
+
+                if st.session_state.debug_mode:
+                    st.code(traceback.format_exc())
+
+                st.stop()
+
+        st.markdown(assistant_reply)
+
+    # Add assistant message after successful generation.
+    st.session_state.raw_history.append(
+        {
+            "role": "assistant",
+            "content": assistant_reply
+        }
+    )

@@ -139,17 +139,19 @@ if prompt := st.chat_input("Type your message here..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # Alternate role turns perfectly to prevent Google BadRequest errors
     if not st.session_state.hidden_context_sent:
+        combined_first_turn = f"{st.session_state.initial_context}\n\nUser Message: {prompt}"
         st.session_state.raw_history.append({
             "role": "user",
-            "parts": [{"text": st.session_state.initial_context}]
+            "parts": [{"text": combined_first_turn}]
         })
         st.session_state.hidden_context_sent = True
-
-    st.session_state.raw_history.append({
-        "role": "user",
-        "parts": [{"text": prompt}]
-    })
+    else:
+        st.session_state.raw_history.append({
+            "role": "user",
+            "parts": [{"text": prompt}]
+        })
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
@@ -182,5 +184,3 @@ if prompt := st.chat_input("Type your message here..."):
     st.session_state.messages.append({"role": "assistant", "content": display_text.strip()})
     st.session_state.raw_history.append({
         "role": "model",
-        "parts": [{"text": full_response}]
-    })

@@ -106,21 +106,17 @@ if "demographics_injected" not in st.session_state:
         "sector": sector,
     }
     st.session_state.demographics_injected = True
-  
-# ---------- INITIALISE GEMINI ----------
-# Replace this string with a fresh key generated strictly via aistudio.google.com
-api_key = "AQ.Ab8RN6KH-14uH2TwTiWJiOf8UKyWSGPxRYz-OvLS0T1ZTbUVVw"
 
-try:
-    genai.configure(api_key=api_key.strip(), transport="rest")
-    model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-flash",
-        system_instruction=SYSTEM_PROMPT,
-    )
-except Exception as connection_issue:
-    st.error("❌ Authentication failure: Google rejected the key string format.")
-    st.caption(f"Server Log Context: {connection_issue}")
-    st.stop()
+# ---------- INITIALISE GEMINI ----------
+# Paste your fresh key starting with AIzaSy inside the quotes below
+api_key = "AIzaSyYOUR_ACTUAL_KEY_HERE"
+
+genai.configure(api_key=api_key.strip(), transport="rest")
+
+model = genai.GenerativeModel(
+    model_name="models/gemini-1.5-flash",
+    system_instruction=SYSTEM_PROMPT,
+)
 
 # ---------- SESSION STATE FOR CHAT ----------
 if "messages" not in st.session_state:
@@ -188,46 +184,3 @@ if prompt := st.chat_input("Type your message here..."):
         "role": "model",
         "parts": [{"text": full_response}]
     })
-
-
-      with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            # Stripped out the mask to force Google's true error to display on your screen
-            response = model.generate_content(
-                st.session_state.raw_history,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.7,
-                    max_output_tokens=500,
-                )
-            )
-            full_response = response.text
-            try:
-                response = model.generate_content(
-                    st.session_state.raw_history,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.7,
-                        max_output_tokens=500,
-                    )
-                )
-                full_response = response.text
-            except Exception as api_err:
-                st.error("⚠️ Connection error with Google's API server. Please check the key status.")
-                print(f"[API FAILURE]: {api_err}")
-                st.stop()
-        # Extract hidden JSON block safely
-        json_match = re.search(r'\{.*?"phase".*?\}', full_response, re.DOTALL)
-        risk_data = None
-        if json_match:
-            try:
-                risk_data = json.loads(json_match.group())
-                display_text = full_response[:json_match.start()].strip() + full_response[json_match.end():].strip()
-            except Exception:
-                display_text = full_response
-        else:
-            display_text = full_response
-
-        st.markdown(display_text.strip())
-
-        if risk_data:
-            print(f"[CITTA RISK DATA] {risk_data}")
-

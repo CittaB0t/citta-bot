@@ -106,47 +106,20 @@ if "demographics_injected" not in st.session_state:
         "sector": sector,
     }
     st.session_state.demographics_injected = True
+
 # ---------- INITIALISE GEMINI ----------
-# 1. Attempt to pull the key from Streamlit Cloud Secrets safely
-api_key = st.secrets.get("GEMINI_API_KEY", None)
+# Hardcoded direct key insertion to bypass Streamlit settings entirely
+api_key = "AQ.Ab8RN6JtQS2pFivqYRUOWHATeZeYX2o3icx2JgHC3FVUhrOA1A"
 
-# 2. If it fails, is blank, or contains a placeholder, build a clear fallback input
-if not api_key or "YourActualSecretKey" in api_key or len(api_key) < 10:
-    st.info("💡 Tip: To hide this password box permanently, add your GEMINI_API_KEY inside Streamlit Advanced Settings.")
-    api_key = st.text_input("Enter your Google AI Studio API Key to continue:", type="password")
-    
-    if not api_key:
-        st.warning("Please enter your Gemini API key above to activate Citta Companion.")
-        st.stop()
-
-# 3. Clean up the string to remove accidental spaces from copy-pasting
-api_key = api_key.strip()
-
-# 4. Bind the connection cleanly over the standard web transport protocol
-try:
-    genai.configure(api_key=api_key, transport="rest")
-    model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-flash",
-        system_instruction=SYSTEM_PROMPT,
-    )
-    # Basic test execution call to verify the key instantly before rendering UI
-    # This prevents the app from breaking halfway through a user conversation
-except Exception as init_err:
-    st.error(f"❌ Google rejected this key. Please check your key status on Google AI Studio.")
-    st.caption(f"Error Details: {init_err}")
-    st.stop()
-
-
-# FORCE TRANSPORT PROTOCOL TO USE STANDARD REST/HTTP OVER PORT 443
 genai.configure(api_key=api_key, transport="rest")
 
 model = genai.GenerativeModel(
     model_name="models/gemini-1.5-flash",
     system_instruction=SYSTEM_PROMPT,
 )
+
 # ---------- SESSION STATE FOR CHAT ----------
 if "messages" not in st.session_state:
-    # Save the system context text securely into session memory permanently
     st.session_state.initial_context = (
         f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
         f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
@@ -166,7 +139,6 @@ if prompt := st.chat_input("Type your message here..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Use the safe, session-stored configuration text 
     if not st.session_state.hidden_context_sent:
         st.session_state.raw_history.append({
             "role": "user",
@@ -174,7 +146,6 @@ if prompt := st.chat_input("Type your message here..."):
         })
         st.session_state.hidden_context_sent = True
 
-    # Pass user message structure properly formatted for standard REST
     st.session_state.raw_history.append({
         "role": "user",
         "parts": [{"text": prompt}]
@@ -192,11 +163,11 @@ if prompt := st.chat_input("Type your message here..."):
                 )
                 full_response = response.text
             except Exception as api_err:
-                st.error("⚠️ Connection error. Please verify your GEMINI_API_KEY inside Streamlit Advanced Settings.")
+                st.error("⚠️ Connection error with Google's API server. Please check the key status.")
                 print(f"[API FAILURE]: {api_err}")
                 st.stop()
 
-        # Extract the hidden trailing developer JSON tags cleanly
+        # Extract hidden JSON block safely
         json_match = re.search(r'\{.*?"phase".*?\}', full_response, re.DOTALL)
         risk_data = None
         if json_match:
@@ -208,16 +179,8 @@ if prompt := st.chat_input("Type your message here..."):
         else:
             display_text = full_response
 
-        # Render only clean, therapeutic text to the employee screen
         st.markdown(display_text.strip())
 
-        # Safely capture background developer routing logs
         if risk_data:
             print(f"[CITTA RISK DATA] {risk_data}")
 
-    # Append structural history states for seamless multi-turn recollection
-    st.session_state.messages.append({"role": "assistant", "content": display_text.strip()})
-    st.session_state.raw_history.append({
-        "role": "model",
-        "parts": [{"text": full_response}]
-    })

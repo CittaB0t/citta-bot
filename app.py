@@ -116,7 +116,8 @@ except Exception:
         st.warning("Please enter your Gemini API key to start.")
         st.stop()
 
-genai.configure(api_key=api_key)
+# FORCE TRANSPORT PROTOCOL TO USE STANDARD REST/HTTP OVER PORT 443
+genai.configure(api_key=api_key, transport="rest")
 
 model = genai.GenerativeModel(
     model_name="models/gemini-1.5-flash",

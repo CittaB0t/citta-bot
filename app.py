@@ -92,6 +92,7 @@ This allows the backend to parse and take action (e.g., send email when intake_t
 st.set_page_config(page_title="Citta Companion", page_icon="🌿", layout="centered")
 st.title("🌿 Citta Companion")
 st.caption("Confidential well-being support · Your conversation is private")
+
 # ---------- READ DEMOGRAPHICS FROM URL PARAMETERS ----------
 query_params = st.query_params
 employee_name = query_params.get("name", "there")
@@ -105,10 +106,11 @@ if "demographics_injected" not in st.session_state:
         "sector": sector,
     }
     st.session_state.demographics_injected = True
+
 # ---------- INITIALISE GEMINI ----------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
-except:
+except Exception:
     api_key = st.text_input("Enter your Gemini API key", type="password")
     if not api_key:
         st.warning("Please enter your Gemini API key to start.")
@@ -122,11 +124,13 @@ model = genai.GenerativeModel(
 )
 
 # ---------- SESSION STATE FOR CHAT ----------
+# Keep this global context variable completely clear of the conditional block
+initial_context = (
+    f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
+    f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
+)
+
 if "messages" not in st.session_state:
-    initial_context = (
-        f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
-        f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
-    )
     st.session_state.hidden_context_sent = False
     st.session_state.messages = []
     st.session_state.raw_history = []
@@ -148,20 +152,6 @@ if prompt := st.chat_input("Type your message here..."):
             "parts": [initial_context]
         })
         st.session_state.hidden_context_sent = True
-# ---------- SESSION STATE FOR CHAT ----------
-if "messages" not in st.session_state:
-    # Store the string directly in session state so it never vanishes
-    st.session_state.initial_context = (
-        f"[SYSTEM NOTE: This employee is {employee_name}, works in {sector} sector, "
-        f"preferred language is {preferred_lang}. Greet them warmly as per Phase 1.]"
-    )
-    st.session_state.hidden_context_sent = False
-    st.session_state.messages = []
-    st.session_state.raw_history = []
-if "messages" not in st.session_state:
-    st.session_state.hidden_context_sent = False
-    st.session_state.messages = []
-    st.session_state.raw_history = []
 
     st.session_state.raw_history.append({
         "role": "user",
@@ -180,14 +170,14 @@ if "messages" not in st.session_state:
 
         full_response = response.text
 
-        # Extract hidden JSON block
+        # Extract hidden JSON block safely
         json_match = re.search(r'\{.*?"phase".*?\}', full_response, re.DOTALL)
         risk_data = None
         if json_match:
             try:
                 risk_data = json.loads(json_match.group())
                 display_text = full_response[:json_match.start()].strip() + full_response[json_match.end():].strip()
-            except:
+            except Exception:
                 display_text = full_response
         else:
             display_text = full_response

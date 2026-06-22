@@ -108,8 +108,12 @@ if "demographics_injected" not in st.session_state:
     st.session_state.demographics_injected = True
 
 # ---------- INITIALISE GEMINI ----------
-# Paste your verified key string beginning with AIzaSy here
-api_key = "AQ.Ab8RN6KH-14uH2TwTiWJiOf8UKyWSGPxRYz-OvLS0T1ZTbUVVw"
+# We pull the key from Streamlit Cloud dashboard securely to stop code-level typos
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    st.error("⚠️ Key missing. Please paste your GEMINI_API_KEY inside Streamlit Advanced Settings -> Secrets.")
+    st.stop()
 
 genai.configure(api_key=api_key.strip(), transport="rest")
 

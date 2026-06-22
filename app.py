@@ -155,6 +155,41 @@ if prompt := st.chat_input("Type your message here..."):
         "parts": [{"text": prompt}]
     })
 
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response = model.generate_content(
+                st.session_state.raw_history,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.7,
+                    max_output_tokens=500,
+                )
+            )
+            full_response = response.text
+
+        # Extract hidden JSON block safely
+        json_match = re.search(r'\{.*?"phase".*?\}', full_response, re.DOTALL)
+        risk_data = None
+        if json_match:
+            try:
+                risk_data = json.loads(json_match.group())
+                display_text = full_response[:json_match.start()].strip() + full_response[json_match.end():].strip()
+            except Exception:
+                display_text = full_response
+        else:
+            display_text = full_response
+
+        st.markdown(display_text.strip())
+
+        if risk_data:
+            print(f"[CITTA RISK DATA] {risk_data}")
+
+    st.session_state.messages.append({"role": "assistant", "content": display_text.strip()})
+    st.session_state.raw_history.append({
+        "role": "model",
+        "parts": [{"text": full_response}]
+    })
+
+
       with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             # Stripped out the mask to force Google's true error to display on your screen

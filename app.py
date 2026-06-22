@@ -156,7 +156,7 @@ if prompt := st.chat_input("Type your message here..."):
     })
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
+        with         with st.spinner("Thinking..."):
             try:
                 response = model.generate_content(
                     st.session_state.raw_history,
@@ -170,7 +170,6 @@ if prompt := st.chat_input("Type your message here..."):
                 st.error("⚠️ Connection error with Google's API server. Please check the key status.")
                 print(f"[API FAILURE]: {api_err}")
                 st.stop()
-
         # Extract hidden JSON block safely
         json_match = re.search(r'\{.*?"phase".*?\}', full_response, re.DOTALL)
         risk_data = None

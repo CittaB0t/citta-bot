@@ -146,29 +146,35 @@ if prompt := st.chat_input("Type your message here..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # Append the initial background context tracking correctly formatted
     if not st.session_state.hidden_context_sent:
         st.session_state.raw_history.append({
             "role": "user",
-            "parts": [initial_context]
+            "parts": [{"text": initial_context}]
         })
         st.session_state.hidden_context_sent = True
 
+    # Force the prompt into a dictionary object that the gRPC client expects
     st.session_state.raw_history.append({
         "role": "user",
-        "parts": [prompt]
+        "parts": [{"text": prompt}]
     })
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response = model.generate_content(
-                st.session_state.raw_history,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.7,
-                    max_output_tokens=500,
+            try:
+                response = model.generate_content(
+                    st.session_state.raw_history,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.7,
+                        max_output_tokens=500,
+                    )
                 )
-            )
-
-        full_response = response.text
+                full_response = response.text
+            except Exception as api_err:
+                st.error("⚠️ Connection error. Please check your API key or network status.")
+                print(f"[API FAILURE]: {api_err}")
+                st.stop()
 
         # Extract hidden JSON block safely
         json_match = re.search(r'\{.*?"phase".*?\}', full_response, re.DOTALL)
@@ -190,5 +196,5 @@ if prompt := st.chat_input("Type your message here..."):
     st.session_state.messages.append({"role": "assistant", "content": display_text.strip()})
     st.session_state.raw_history.append({
         "role": "model",
-        "parts": [full_response]
+        "parts": [{"text": full_response}]
     })

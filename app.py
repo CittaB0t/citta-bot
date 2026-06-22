@@ -1,6 +1,6 @@
 import os
 import traceback
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 import google.generativeai as genai
@@ -8,7 +8,7 @@ from google.api_core.exceptions import BadRequest, GoogleAPIError
 
 
 # ------------------------------------------------------------
-# Streamlit setup
+# Streamlit page setup
 # ------------------------------------------------------------
 
 st.set_page_config(
@@ -28,7 +28,11 @@ st.caption(
 # Secrets helper
 # ------------------------------------------------------------
 
-def get_secret(name: str, default: str | None = None) -> str | None:
+def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
+    """
+    Reads from Streamlit secrets first, then environment variables.
+    """
+
     try:
         if name in st.secrets:
             return st.secrets[name]
@@ -39,7 +43,7 @@ def get_secret(name: str, default: str | None = None) -> str | None:
 
 
 # ------------------------------------------------------------
-# Gemini setup
+# API key setup
 # ------------------------------------------------------------
 
 GOOGLE_API_KEY = (
@@ -48,13 +52,107 @@ GOOGLE_API_KEY = (
     or get_secret("GOOGLE_GEMINI_API_KEY")
 )
 
+if GOOGLE_API_KEY:
+    GOOGLE_API_KEY = str(GOOGLE_API_KEY).strip().strip('"').strip("'")
+
 if not GOOGLE_API_KEY:
     st.error("Missing Gemini API key. Add GOOGLE_API_KEY in Streamlit Cloud secrets.")
     st.stop()
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-MODEL_NAME = get_secret("GEMINI_MODEL", "gemini-1.5-flash")
+
+# ------------------------------------------------------------
+# Model selection
+# ------------------------------------------------------------
+
+CONFIGURED_MODEL_NAME = get_secret("GEMINI_MODEL", "gemini-3.5-flash")
+
+if CONFIGURED_MODEL_NAME:
+    CONFIGURED_MODEL_NAME = str(CONFIGURED_MODEL_NAME).strip().strip('"').strip("'")
+else:
+    CONFIGURED_MODEL_NAME = "gemini-3.5-flash"
+
+
+def strip_models_prefix(model_name: str) -> str:
+    """
+    Converts models/gemini-3.5-flash to gemini-3.5-flash.
+    """
+
+    if not model_name:
+        return ""
+
+    return model_name.replace("models/", "").strip()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def list_available_generate_content_models() -> List[str]:
+    """
+    Lists Gemini models available to this API key that support generateContent.
+    """
+
+    available_models: List[str] = []
+
+    try:
+        for m in genai.list_models():
+            methods = getattr(m, "supported_generation_methods", [])
+
+            if "generateContent" in methods:
+                available_models.append(m.name)
+
+    except Exception:
+        return []
+
+    return available_models
+
+
+def choose_model(configured_model: str, available_models: List[str]) -> str:
+    """
+    Chooses a working model.
+
+    Priority:
+    1. Use configured model if it is available.
+    2. Use preferred current models if available.
+    3. Use any available Flash model.
+    4. Use first available model.
+    5. Fall back to configured model if model listing failed.
+    """
+
+    configured_clean = strip_models_prefix(configured_model)
+
+    if available_models:
+        for model_name in available_models:
+            if strip_models_prefix(model_name) == configured_clean:
+                return model_name
+
+        preferred_models = [
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-latest",
+            "gemini-3-flash-preview",
+        ]
+
+        for preferred in preferred_models:
+            for model_name in available_models:
+                if strip_models_prefix(model_name) == preferred:
+                    return model_name
+
+        for model_name in available_models:
+            if "flash" in strip_models_prefix(model_name):
+                return model_name
+
+        return available_models[0]
+
+    return configured_model
+
+
+AVAILABLE_MODELS = list_available_generate_content_models()
+MODEL_NAME = choose_model(CONFIGURED_MODEL_NAME, AVAILABLE_MODELS)
+
+
+# ------------------------------------------------------------
+# Citta system instruction
+# ------------------------------------------------------------
 
 SYSTEM_INSTRUCTION = """
 You are Citta's AI Discovery Assistant.
@@ -71,6 +169,7 @@ Important boundaries:
 - Do not provide therapy, counselling, medical advice, legal advice, or HR determinations.
 - Do not replace a clinician, doctor, psychologist, psychiatrist, emergency service, or crisis service.
 - Ask only one or two questions at a time.
+- Do not ask for unnecessary identifying personal information.
 
 Risk handling:
 - If the user suggests immediate danger, self-harm, harm to others, abuse, or serious safety risk, advise them to contact local emergency services, a trusted person, or crisis support immediately.
@@ -82,6 +181,11 @@ Style:
 - Validate the concern before asking the next question.
 - Explain that discovery is to understand support needs, not to judge performance.
 """
+
+
+# ------------------------------------------------------------
+# Create Gemini model
+# ------------------------------------------------------------
 
 model = genai.GenerativeModel(
     model_name=MODEL_NAME,
@@ -130,7 +234,6 @@ def to_gemini_history(raw_history: List[Dict[str, Any]], max_messages: int = 30)
         elif role in ["assistant", "model"]:
             gemini_role = "model"
         else:
-            # Skip system/tool/internal messages.
             continue
 
         if content is None:
@@ -158,7 +261,6 @@ def to_gemini_history(raw_history: List[Dict[str, Any]], max_messages: int = 30)
         converted.pop(0)
 
     # Merge consecutive messages with the same role.
-    # This avoids invalid or messy history such as user-user or model-model.
     normalised: List[Dict[str, Any]] = []
 
     for item in converted:
@@ -175,6 +277,10 @@ def to_gemini_history(raw_history: List[Dict[str, Any]], max_messages: int = 30)
 # ------------------------------------------------------------
 
 def extract_response_text(response: Any) -> str:
+    """
+    Safely extracts text from Gemini response.
+    """
+
     try:
         if response.text:
             return response.text.strip()
@@ -183,28 +289,34 @@ def extract_response_text(response: Any) -> str:
 
     try:
         candidates = getattr(response, "candidates", [])
+
         if candidates:
             parts = candidates[0].content.parts
             texts = []
 
             for part in parts:
                 text = getattr(part, "text", "")
+
                 if text:
                     texts.append(text)
 
             final_text = "\n".join(texts).strip()
+
             if final_text:
                 return final_text
+
     except Exception:
         pass
 
     try:
         prompt_feedback = getattr(response, "prompt_feedback", None)
+
         if prompt_feedback:
             return (
                 "I could not generate a response because the request was blocked "
                 f"or rejected by the model safety system.\n\nDetails: {prompt_feedback}"
             )
+
     except Exception:
         pass
 
@@ -218,13 +330,39 @@ def extract_response_text(response: Any) -> str:
 with st.sidebar:
     st.subheader("App settings")
 
-    st.write("Gemini model:")
+    st.write("Configured model:")
+    st.code(CONFIGURED_MODEL_NAME)
+
+    st.write("Active model:")
     st.code(MODEL_NAME)
+
+    if CONFIGURED_MODEL_NAME != MODEL_NAME:
+        st.warning(
+            "The configured model was not available, so the app selected an available model automatically."
+        )
+
+    if GOOGLE_API_KEY:
+        masked_key = GOOGLE_API_KEY[:6] + "..." + GOOGLE_API_KEY[-4:]
+        st.caption(f"API key loaded: {masked_key}")
 
     st.session_state.debug_mode = st.toggle(
         "Debug mode",
         value=st.session_state.debug_mode
     )
+
+    if st.button("List available Gemini models"):
+        try:
+            available_models = list_available_generate_content_models()
+
+            if available_models:
+                st.write("Available generateContent models:")
+                st.code("\n".join(available_models))
+            else:
+                st.warning("No generateContent models were returned for this API key.")
+
+        except Exception as e:
+            st.error("Could not list models.")
+            st.code(str(e))
 
     if st.button("Clear chat"):
         st.session_state.raw_history = []
@@ -236,8 +374,8 @@ with st.sidebar:
 
     st.code(
         """
-GOOGLE_API_KEY = "your_api_key_here"
-GEMINI_MODEL = "gemini-1.5-flash"
+GOOGLE_API_KEY = "your_google_ai_studio_api_key_here"
+GEMINI_MODEL = "gemini-3.5-flash"
         """.strip(),
         language="toml"
     )
@@ -306,8 +444,10 @@ if user_prompt:
 
                 if gemini_history[-1]["role"] != "user":
                     st.error("The latest Gemini message must be from the user.")
+
                     if st.session_state.debug_mode:
                         st.json(gemini_history)
+
                     st.stop()
 
                 response = model.generate_content(
@@ -342,6 +482,12 @@ if user_prompt:
 
                 if st.session_state.debug_mode:
                     st.code(str(e))
+
+                    st.subheader("Active model")
+                    st.code(MODEL_NAME)
+
+                    st.subheader("Available models")
+                    st.code("\n".join(AVAILABLE_MODELS) if AVAILABLE_MODELS else "No models listed.")
 
                 st.stop()
 

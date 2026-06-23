@@ -1,10 +1,16 @@
 import os
 import traceback
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 import google.generativeai as genai
 from google.api_core.exceptions import BadRequest, GoogleAPIError
+
+try:
+    import requests
+except Exception:
+    requests = None
 
 
 # ------------------------------------------------------------
@@ -12,25 +18,26 @@ from google.api_core.exceptions import BadRequest, GoogleAPIError
 # ------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Citta Discovery Assistant",
+    page_title="Citta Companion",
     page_icon="🧠",
     layout="centered"
 )
 
-st.title("Citta Discovery Assistant")
+st.title("Citta Companion")
 st.caption(
-    "AI-supported discovery for preventive workplace mental health. "
-    "This is not diagnosis, therapy, crisis support, or emergency care."
+    "AI-supported wellbeing discovery. "
+    "Not a diagnosis, therapy, crisis service, or emergency support."
 )
 
 
 # ------------------------------------------------------------
-# Secrets helper
+# Helper: read Streamlit secrets safely
 # ------------------------------------------------------------
 
 def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
     """
-    Reads from Streamlit secrets first, then environment variables.
+    Reads from Streamlit Cloud secrets first.
+    If not found, reads from environment variables.
     """
 
     try:
@@ -43,7 +50,20 @@ def get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
 
 
 # ------------------------------------------------------------
-# API key setup
+# Read employee details from URL
+# Example:
+# https://your-app.streamlit.app?id=CITTA-001&sector=IT&lang=en
+# ------------------------------------------------------------
+
+query_params = st.query_params
+
+EMPLOYEE_ID = query_params.get("id", "TEST-USER")
+EMPLOYEE_SECTOR = query_params.get("sector", "General")
+EMPLOYEE_LANG = query_params.get("lang", "en")
+
+
+# ------------------------------------------------------------
+# Gemini API key setup
 # ------------------------------------------------------------
 
 GOOGLE_API_KEY = (
@@ -56,130 +76,159 @@ if GOOGLE_API_KEY:
     GOOGLE_API_KEY = str(GOOGLE_API_KEY).strip().strip('"').strip("'")
 
 if not GOOGLE_API_KEY:
-    st.error("Missing Gemini API key. Add GOOGLE_API_KEY in Streamlit Cloud secrets.")
+    st.error(
+        "Missing Gemini API key. Please add GOOGLE_API_KEY in Streamlit Cloud secrets."
+    )
     st.stop()
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
 
 # ------------------------------------------------------------
-# Model selection
+# Gemini model setup
 # ------------------------------------------------------------
 
-CONFIGURED_MODEL_NAME = get_secret("GEMINI_MODEL", "gemini-3.5-flash")
+MODEL_NAME = get_secret("GEMINI_MODEL", "gemini-3.5-flash")
 
-if CONFIGURED_MODEL_NAME:
-    CONFIGURED_MODEL_NAME = str(CONFIGURED_MODEL_NAME).strip().strip('"').strip("'")
+if MODEL_NAME:
+    MODEL_NAME = str(MODEL_NAME).strip().strip('"').strip("'")
 else:
-    CONFIGURED_MODEL_NAME = "gemini-3.5-flash"
+    MODEL_NAME = "gemini-3.5-flash"
 
 
-def strip_models_prefix(model_name: str) -> str:
+# ------------------------------------------------------------
+# Optional Make webhook for risk alerts
+# You can leave this blank for now.
+# Later add in Streamlit secrets:
+# MAKE_ALERT_WEBHOOK_URL = "your_make_webhook_url"
+# ------------------------------------------------------------
+
+MAKE_ALERT_WEBHOOK_URL = get_secret("MAKE_ALERT_WEBHOOK_URL", "")
+
+if MAKE_ALERT_WEBHOOK_URL:
+    MAKE_ALERT_WEBHOOK_URL = str(MAKE_ALERT_WEBHOOK_URL).strip().strip('"').strip("'")
+
+
+# ------------------------------------------------------------
+# Red-flag keyword detection
+# This is a simple safety net for MVP.
+# ------------------------------------------------------------
+
+RED_FLAGS = [
+    "suicide",
+    "kill myself",
+    "end my life",
+    "self harm",
+    "self-harm",
+    "hurt myself",
+    "can't go on",
+    "cannot go on",
+    "domestic violence",
+    "abuse",
+    "overdose",
+    "addicted",
+    "substance abuse",
+    "i am not safe",
+    "i don't feel safe",
+    "i want to die",
+    "no reason to live",
+    "ending it all",
+    "harm myself",
+    "hurt someone",
+    "kill someone",
+]
+
+
+def detect_red_flag(message: str) -> bool:
     """
-    Converts models/gemini-3.5-flash to gemini-3.5-flash.
+    Checks whether the user message contains obvious safety red flags.
+    This is not diagnosis. It is only a safety trigger.
     """
 
-    if not model_name:
-        return ""
+    if not message:
+        return False
 
-    return model_name.replace("models/", "").strip()
+    text = message.lower()
+
+    return any(flag in text for flag in RED_FLAGS)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def list_available_generate_content_models() -> List[str]:
+def send_risk_alert(employee_id: str, sector: str, message: str, reason: str):
     """
-    Lists Gemini models available to this API key that support generateContent.
+    Optional: sends risk alert to Make webhook.
+    If MAKE_ALERT_WEBHOOK_URL is not configured, this does nothing.
     """
 
-    available_models: List[str] = []
+    if not MAKE_ALERT_WEBHOOK_URL:
+        return
+
+    if requests is None:
+        return
+
+    payload = {
+        "employee_id": employee_id,
+        "sector": sector,
+        "message": message,
+        "risk_reason": reason,
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
     try:
-        for m in genai.list_models():
-            methods = getattr(m, "supported_generation_methods", [])
-
-            if "generateContent" in methods:
-                available_models.append(m.name)
-
-    except Exception:
-        return []
-
-    return available_models
-
-
-def choose_model(configured_model: str, available_models: List[str]) -> str:
-    """
-    Chooses a working model.
-
-    Priority:
-    1. Use configured model if it is available.
-    2. Use preferred current models if available.
-    3. Use any available Flash model.
-    4. Use first available model.
-    5. Fall back to configured model if model listing failed.
-    """
-
-    configured_clean = strip_models_prefix(configured_model)
-
-    if available_models:
-        for model_name in available_models:
-            if strip_models_prefix(model_name) == configured_clean:
-                return model_name
-
-        preferred_models = [
-            "gemini-3.5-flash",
-            "gemini-3.1-flash-lite",
-            "gemini-flash-latest",
-            "gemini-3-flash-preview",
-        ]
-
-        for preferred in preferred_models:
-            for model_name in available_models:
-                if strip_models_prefix(model_name) == preferred:
-                    return model_name
-
-        for model_name in available_models:
-            if "flash" in strip_models_prefix(model_name):
-                return model_name
-
-        return available_models[0]
-
-    return configured_model
-
-
-AVAILABLE_MODELS = list_available_generate_content_models()
-MODEL_NAME = choose_model(CONFIGURED_MODEL_NAME, AVAILABLE_MODELS)
+        requests.post(MAKE_ALERT_WEBHOOK_URL, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Risk alert failed: {e}")
 
 
 # ------------------------------------------------------------
-# Citta system instruction
+# Gemini system instruction
 # ------------------------------------------------------------
 
-SYSTEM_INSTRUCTION = """
-You are Citta's AI Discovery Assistant.
+SYSTEM_INSTRUCTION = f"""
+You are Citta Companion, a compassionate workplace mental health support companion.
 
-Purpose:
-- Support early workplace mental health discovery.
-- Help employees reflect on workplace stress, burnout signals, emotional load, trauma-related language, psychological safety, and support needs.
-- Use a whole-company preventive mental health lens.
-- Be warm, professional, trauma-informed, and non-judgmental.
+Employee session ID: {EMPLOYEE_ID}
+Sector: {EMPLOYEE_SECTOR}
+Language: {EMPLOYEE_LANG}
+
+Your purpose:
+- Support early wellbeing discovery.
+- Ask gentle questions about how the employee is feeling.
+- Explore general wellbeing, stress, sleep, emotional load, workplace strain, and support needs.
+- Be warm, non-judgmental, trauma-informed, and workplace-aware.
 
 Important boundaries:
+- You are not a therapist.
+- You are not a doctor.
+- You are not a diagnosis tool.
+- You are not a crisis service.
+- You are not an emergency service.
 - Do not diagnose.
-- Do not say the user has PTSD, complex PTSD, depression, anxiety, ADHD, trauma, or any other condition.
-- Do not provide therapy, counselling, medical advice, legal advice, or HR determinations.
-- Do not replace a clinician, doctor, psychologist, psychiatrist, emergency service, or crisis service.
-- Ask only one or two questions at a time.
-- Do not ask for unnecessary identifying personal information.
+- Do not say the user has PTSD, depression, anxiety, addiction, trauma, ADHD, or any clinical condition.
+- Do not provide medical advice.
+- Do not provide legal advice.
+- Do not make HR decisions.
+- Do not tell the employee that their individual response will be shared with their employer.
 
-Risk handling:
-- If the user suggests immediate danger, self-harm, harm to others, abuse, or serious safety risk, advise them to contact local emergency services, a trusted person, or crisis support immediately.
-- For workplace concerns, encourage appropriate support through HR, manager, EAP/FEAP, clinician, or emergency support depending on urgency.
+Privacy statement:
+- Individual responses are not shared with the employer.
+- The employer may receive only de-identified and aggregated insights.
+- If serious distress or safety concerns appear, Citta may recommend human support or alert the Citta intake team for review.
 
-Style:
-- Keep responses concise.
+Conversation style:
+- Greet the employee warmly.
+- Ask how they are feeling today.
+- Keep responses brief and clear.
+- Ask one or two questions at a time.
 - Use simple language.
-- Validate the concern before asking the next question.
-- Explain that discovery is to understand support needs, not to judge performance.
+- Be supportive but not clinical.
+- If the employee seems distressed, gently suggest that speaking with a human Citta intake professional or counsellor may be helpful.
+
+Safety handling:
+- If there are signs of immediate danger, self-harm, harm to others, abuse, or serious safety risk, tell the user that Citta Companion is not emergency support.
+- Advise them to contact local emergency services, a trusted person, or a human support professional immediately if they may be unsafe.
+- Encourage human support for serious or ongoing distress.
+
+Start the conversation by saying hello and asking how the employee is feeling today.
 """
 
 
@@ -201,26 +250,22 @@ if "raw_history" not in st.session_state:
     st.session_state.raw_history = []
 
 if "debug_mode" not in st.session_state:
-    st.session_state.debug_mode = True
+    st.session_state.debug_mode = False
 
 
 # ------------------------------------------------------------
-# Gemini history converter
+# Convert Streamlit messages into Gemini format
 # ------------------------------------------------------------
 
 def to_gemini_history(raw_history: List[Dict[str, Any]], max_messages: int = 30) -> List[Dict[str, Any]]:
     """
-    Converts Streamlit-style messages into Gemini-compatible history.
-
-    Streamlit style:
+    Streamlit uses:
         {"role": "assistant", "content": "..."}
 
-    Gemini style:
+    Gemini expects:
         {"role": "model", "parts": ["..."]}
 
-    Gemini expects:
-        role = "user" or "model"
-        parts = [...]
+    This function converts the history safely.
     """
 
     converted: List[Dict[str, Any]] = []
@@ -256,7 +301,7 @@ def to_gemini_history(raw_history: List[Dict[str, Any]], max_messages: int = 30)
             }
         )
 
-    # Gemini should not receive a history that starts with the model.
+    # Gemini should not receive history that starts with the model.
     while converted and converted[0]["role"] != "user":
         converted.pop(0)
 
@@ -273,7 +318,7 @@ def to_gemini_history(raw_history: List[Dict[str, Any]], max_messages: int = 30)
 
 
 # ------------------------------------------------------------
-# Response text extractor
+# Extract Gemini response text safely
 # ------------------------------------------------------------
 
 def extract_response_text(response: Any) -> str:
@@ -328,18 +373,21 @@ def extract_response_text(response: Any) -> str:
 # ------------------------------------------------------------
 
 with st.sidebar:
-    st.subheader("App settings")
+    st.subheader("Citta Session")
 
-    st.write("Configured model:")
-    st.code(CONFIGURED_MODEL_NAME)
+    st.write("Employee session ID:")
+    st.code(EMPLOYEE_ID)
 
-    st.write("Active model:")
+    st.write("Sector:")
+    st.code(EMPLOYEE_SECTOR)
+
+    st.write("Language:")
+    st.code(EMPLOYEE_LANG)
+
+    st.divider()
+
+    st.write("Gemini model:")
     st.code(MODEL_NAME)
-
-    if CONFIGURED_MODEL_NAME != MODEL_NAME:
-        st.warning(
-            "The configured model was not available, so the app selected an available model automatically."
-        )
 
     if GOOGLE_API_KEY:
         masked_key = GOOGLE_API_KEY[:6] + "..." + GOOGLE_API_KEY[-4:]
@@ -352,13 +400,17 @@ with st.sidebar:
 
     if st.button("List available Gemini models"):
         try:
-            available_models = list_available_generate_content_models()
+            available_models = []
+
+            for m in genai.list_models():
+                if "generateContent" in m.supported_generation_methods:
+                    available_models.append(m.name)
 
             if available_models:
                 st.write("Available generateContent models:")
                 st.code("\n".join(available_models))
             else:
-                st.warning("No generateContent models were returned for this API key.")
+                st.warning("No generateContent models were returned.")
 
         except Exception as e:
             st.error("Could not list models.")
@@ -370,30 +422,27 @@ with st.sidebar:
 
     st.divider()
 
-    st.caption("Streamlit Cloud secrets should include:")
-
-    st.code(
-        """
-GOOGLE_API_KEY = "your_google_ai_studio_api_key_here"
-GEMINI_MODEL = "gemini-3.5-flash"
-        """.strip(),
-        language="toml"
+    st.caption(
+        "Citta Companion is not a diagnosis, therapy, crisis service, or emergency support."
     )
 
 
 # ------------------------------------------------------------
 # Opening message
-# IMPORTANT:
 # This is displayed only.
-# It is NOT stored in raw_history.
+# It is NOT sent to Gemini history.
 # ------------------------------------------------------------
 
 OPENING_MESSAGE = """
-Hello, I’m Citta’s AI Discovery Assistant.
+Hello, I’m **Citta Companion**.
 
-I can help explore workplace stress, emotional load, burnout signals, psychological safety, and support needs in a structured and non-judgmental way.
+I’m here to support your wellbeing discovery in a gentle and confidential way.
 
-To begin, what would you like support with today?
+Your individual responses are not shared with your employer. Your employer may receive only de-identified and aggregated wellbeing insights.
+
+I’m not a therapist, diagnosis tool, crisis service, or emergency service.
+
+How are you feeling today?
 """
 
 if not st.session_state.raw_history:
@@ -402,7 +451,7 @@ if not st.session_state.raw_history:
 
 
 # ------------------------------------------------------------
-# Render existing chat history
+# Display existing chat history
 # ------------------------------------------------------------
 
 for msg in st.session_state.raw_history:
@@ -423,6 +472,7 @@ for msg in st.session_state.raw_history:
 user_prompt = st.chat_input("Type your message here...")
 
 if user_prompt:
+    # Store user message
     st.session_state.raw_history.append(
         {
             "role": "user",
@@ -430,9 +480,29 @@ if user_prompt:
         }
     )
 
+    # Display user message
     with st.chat_message("user"):
         st.markdown(user_prompt)
 
+    # Check red flag
+    red_flag_detected = detect_red_flag(user_prompt)
+
+    if red_flag_detected:
+        st.warning(
+            "It sounds like you may be experiencing serious distress or safety concerns. "
+            "Citta Companion is not an emergency or crisis service. "
+            "If you may be unsafe, please contact local emergency services, a trusted person, "
+            "or a human support professional immediately."
+        )
+
+        send_risk_alert(
+            employee_id=EMPLOYEE_ID,
+            sector=EMPLOYEE_SECTOR,
+            message=user_prompt,
+            reason="Red-flag keyword detected"
+        )
+
+    # Generate assistant reply
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
@@ -486,9 +556,6 @@ if user_prompt:
                     st.subheader("Active model")
                     st.code(MODEL_NAME)
 
-                    st.subheader("Available models")
-                    st.code("\n".join(AVAILABLE_MODELS) if AVAILABLE_MODELS else "No models listed.")
-
                 st.stop()
 
             except Exception:
@@ -501,6 +568,7 @@ if user_prompt:
 
         st.markdown(assistant_reply)
 
+    # Store assistant message
     st.session_state.raw_history.append(
         {
             "role": "assistant",
